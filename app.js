@@ -154,6 +154,10 @@ function monthName(key, short = false) {
   const [y, m] = key.split('-').map(Number);
   return new Date(y, m - 1, 1).toLocaleDateString('fr-FR', short ? { month: 'short' } : { month: 'long', year: 'numeric' });
 }
+function fullDate(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
 function dayLabel(iso) {
   const [y, m, d] = iso.split('-').map(Number);
   const date = new Date(y, m - 1, d);
@@ -340,7 +344,7 @@ function txRow(t) {
   }
   return `<button class="tx" data-edit="${t.id}">
     <span class="ico">${icon}</span>
-    <span class="mid"><div class="t1">${esc(title)}</div><div class="t2">${esc(sub)}</div></span>
+    <span class="mid"><div class="t1">${esc(title)}</div><div class="t2">${esc(sub)}</div><div class="t3">📅 ${fullDate(t.date)}</div></span>
     <span class="amt ${cls}">${amt}</span>
   </button>`;
 }
@@ -371,7 +375,7 @@ function viewTx() {
 
   return `
     <div class="toolbar">
-      <input type="search" id="tx-search" placeholder="Rechercher…" value="${esc(ui.txSearch)}" aria-label="Rechercher">
+      <input type="search" id="tx-search" placeholder="Rechercher (description, catégorie, montant)…" value="${esc(ui.txSearch)}" aria-label="Rechercher">
     </div>
     <div class="toolbar"><div class="seg">${seg}</div></div>
     ${list.length ? [...groups.entries()].map(([d, ts]) => {
@@ -617,6 +621,9 @@ function openTxSheet(existing, preset = {}) {
   let type = t.type;
   let categoryId = t.categoryId;
 
+  // Descriptions récentes de ce type, proposées en raccourci
+  const pastNotes = () => [...new Set(sortedTx(state.transactions).filter((x) => x.type === type && x.note).map((x) => x.note))].slice(0, 6);
+
   const accOptions = (sel) => state.accounts.map((a) => `<option value="${a.id}" ${a.id === sel ? 'selected' : ''}>${a.icon || ''} ${esc(a.name)}</option>`).join('');
 
   const body = () => {
@@ -632,6 +639,10 @@ function openTxSheet(existing, preset = {}) {
         <input class="amount-input" name="amount" inputmode="decimal" autocomplete="off" required placeholder="${inputValue(0)}"
           value="${t.amount ? inputValue(t.amount) : ''}">
       </label>
+      <label class="f">Description
+        <textarea name="note" rows="2" maxlength="200" placeholder="${type === 'income' ? 'Ex. Salaire d’octobre, vente du téléphone…' : type === 'transfer' ? 'Ex. Retrait au guichet, dépôt Orange Money…' : 'Ex. Marché du samedi, carburant, facture CIE…'}">${esc(t.note)}</textarea>
+      </label>
+      ${pastNotes().length ? `<div class="chips" style="margin-top:-6px">${pastNotes().map((n) => `<button type="button" class="chip" data-note="${esc(n)}">${esc(n)}</button>`).join('')}</div>` : ''}
       ${type === 'transfer' ? `
         <div class="two">
           <label class="f">De<select name="accountId">${accOptions(t.accountId)}</select></label>
@@ -640,10 +651,7 @@ function openTxSheet(existing, preset = {}) {
         <div class="f" style="font-size:13px;color:var(--ink-2)">Catégorie</div>
         <div class="chips">${cats.map((c) => `<button type="button" class="chip ${c.id === categoryId ? 'on' : ''}" data-chip="${c.id}">${c.icon} ${esc(c.name)}</button>`).join('')}</div>
         <label class="f">Compte<select name="accountId">${accOptions(t.accountId)}</select></label>`}
-      <div class="two">
-        <label class="f">Date<input type="date" name="date" required value="${t.date}"></label>
-        <label class="f">Note<input name="note" maxlength="80" placeholder="Optionnel" value="${esc(t.note)}"></label>
-      </div>
+      <label class="f">Date<input type="date" name="date" required value="${t.date}"></label>
       <div class="btn-row">
         ${existing ? `<button class="btn danger" value="delete" formnovalidate>Supprimer</button>` : ''}
         <button class="btn primary" value="save">Enregistrer</button>
@@ -662,6 +670,9 @@ function openTxSheet(existing, preset = {}) {
   const mount = () => {
     sheetForm.querySelectorAll('[data-type]').forEach((b) => b.onclick = () => {
       snapshot(); type = b.dataset.type; sheetForm.innerHTML = body(); mount();
+    });
+    sheetForm.querySelectorAll('[data-note]').forEach((b) => b.onclick = () => {
+      sheetForm.elements.note.value = b.dataset.note;
     });
     sheetForm.querySelectorAll('[data-chip]').forEach((b) => b.onclick = () => {
       categoryId = b.dataset.chip;
@@ -813,7 +824,7 @@ function download(name, content, type) {
 }
 
 function exportCSV() {
-  const rows = [['Date', 'Type', 'Catégorie', 'Compte', 'Vers compte', 'Montant', 'Note']];
+  const rows = [['Date', 'Type', 'Catégorie', 'Compte', 'Vers compte', 'Montant', 'Description']];
   const label = { income: 'Revenu', expense: 'Dépense', transfer: 'Virement' };
   for (const t of sortedTx(state.transactions).reverse()) {
     const c = catById(t.categoryId), a = accById(t.accountId), to = accById(t.toAccountId);

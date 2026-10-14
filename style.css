@@ -136,8 +136,9 @@ main { max-width: 720px; margin: 0 auto; padding: 0 16px; }
 .tx:hover { background: var(--surface-2); }
 .tx .ico { width: 38px; height: 38px; border-radius: 12px; background: var(--surface-2); display: grid; place-items: center; font-size: 19px; flex: none; }
 .tx .mid { flex: 1; min-width: 0; }
-.tx .t1 { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx .t1 { font-weight: 600; overflow-wrap: anywhere; }
 .tx .t2 { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx .t3 { font-size: 12px; color: var(--muted); margin-top: 2px; white-space: nowrap; }
 .tx .amt { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 .empty { text-align: center; color: var(--muted); padding: 28px 12px; }
@@ -194,6 +195,7 @@ details summary { cursor: pointer; color: var(--accent); font-size: 13px; margin
 
 label.f { display: block; font-size: 13px; color: var(--ink-2); margin-bottom: 12px; }
 label.f > input, label.f > select, label.f > textarea, .toolbar input, .toolbar select {
+  resize: vertical;
   display: block; width: 100%; margin-top: 4px; padding: 10px 12px;
   border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
 }
@@ -244,6 +246,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
 .chip { border: 1px solid var(--border); background: var(--surface-2); padding: 6px 10px; border-radius: 999px; font-size: 13px; }
+.chip[data-note] { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); font-weight: 600; }
 
 #toast {
