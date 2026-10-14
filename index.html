@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Caisse</title>
+  <meta name="description" content="Suivi de portefeuille, dépenses et revenus du mois">
+  <meta name="theme-color" content="#2a78d6">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 id="view-title">Accueil</h1>
+    <div class="month-picker" id="month-picker">
+      <button class="icon-btn" id="prev-month" aria-label="Mois précédent">‹</button>
+      <span id="month-label"></span>
+      <button class="icon-btn" id="next-month" aria-label="Mois suivant">›</button>
+    </div>
+  </header>
+
+  <main id="app"></main>
+
+  <button class="fab" id="fab" aria-label="Ajouter une opération">+</button>
+
+  <nav class="tabbar">
+    <button data-view="home" class="active"><span>🏠</span>Accueil</button>
+    <button data-view="tx"><span>📋</span>Opérations</button>
+    <button data-view="accounts"><span>👛</span>Comptes</button>
+    <button data-view="stats"><span>📊</span>Stats</button>
+    <button data-view="settings"><span>⚙️</span>Réglages</button>
+  </nav>
+
+  <dialog id="sheet"><form method="dialog" id="sheet-form"></form></dialog>
+  <div id="toast" role="status"></div>
+  <div id="tooltip" role="tooltip"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
