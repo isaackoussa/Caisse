@@ -3,12 +3,19 @@
 // (Netlify Blobs en production, un stockage local pour le développement).
 
 import crypto from 'node:crypto';
+import {
+  generateRegistrationOptions, verifyRegistrationResponse,
+  generateAuthenticationOptions, verifyAuthenticationResponse,
+} from '@simplewebauthn/server';
 
 const TOKEN_DAYS = 180;
 const MAX_FAILS = 5;
 const LOCK_MINUTES = 5;
 const MAX_DATA_BYTES = 4 * 1024 * 1024;
 const USERNAME_RE = /^[a-z0-9][a-z0-9._-]{2,29}$/;
+const CRED_ID_RE = /^[A-Za-z0-9_-]{16,1400}$/;
+const MAX_PASSKEYS = 10;
+const CHALLENGE_MINUTES = 5;
 
 const json = (body, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -27,6 +34,7 @@ export function makeHandler(getStore) {
   const users = () => getStore({ name: 'caisse-users', consistency: 'strong' });
   const vaults = () => getStore({ name: 'caisse-data', consistency: 'strong' });
   const config = () => getStore({ name: 'caisse-config', consistency: 'strong' });
+  const passkeyIndex = () => getStore({ name: 'caisse-passkeys', consistency: 'strong' });
 
   // Clé de signature des jetons : variable d'environnement, sinon générée une fois et conservée.
   let secretCache = process.env.CAISSE_SECRET || null;
@@ -60,7 +68,7 @@ export function makeHandler(getStore) {
   async function authUser(req) {
     const h = req.headers.get('authorization') || '';
     const p = await verify(h.replace(/^Bearer\s+/i, ''));
-    if (!p) return null;
+    if (!p || p.k) return null; // un jeton de défi n'est pas une session
     const user = await users().get(p.u, { type: 'json' });
     if (!user || user.tv !== p.tv) return null;
     return { name: p.u, user };
@@ -165,11 +173,118 @@ export function makeHandler(getStore) {
     return json({ rev: entry.rev, updatedAt: entry.updatedAt });
   }
 
+  /* ---------- Face ID / empreinte (WebAuthn) ---------- */
+
+  // Le site (domaine) auquel la clé est liée : celui qui reçoit la requête
+  function site(req) {
+    const u = new URL(req.url);
+    return { rpID: u.hostname, origin: u.origin };
+  }
+
+  async function challengeToken(challenge, kind, username) {
+    return sign({ k: kind, c: challenge, u: username || null, exp: Date.now() + CHALLENGE_MINUTES * 60000 });
+  }
+
+  async function readChallenge(token, kind) {
+    const p = await verify(token);
+    if (!p || p.k !== kind) throw Object.assign(new Error('Demande expirée, réessayez.'), { status: 400 });
+    return p;
+  }
+
+  async function passkeyRegisterOptions(req, auth) {
+    const { rpID } = site(req);
+    const list = auth.user.passkeys || [];
+    const options = await generateRegistrationOptions({
+      rpName: 'Caisse', rpID, userName: auth.name, userDisplayName: auth.name,
+      userID: new TextEncoder().encode(auth.name),
+      attestationType: 'none',
+      excludeCredentials: list.map((k) => ({ id: k.id, transports: k.transports })),
+      authenticatorSelection: { authenticatorAttachment: 'platform', residentKey: 'preferred', userVerification: 'required' },
+    });
+    return json({ options, challengeToken: await challengeToken(options.challenge, 'reg', auth.name) });
+  }
+
+  async function passkeyRegister(req, auth) {
+    const body = await readBody(req);
+    const ch = await readChallenge(body.challengeToken, 'reg');
+    if (ch.u !== auth.name) return json({ error: 'Demande invalide.' }, 400);
+    const { rpID, origin } = site(req);
+    let v;
+    try {
+      v = await verifyRegistrationResponse({
+        response: body.response, expectedChallenge: ch.c, expectedOrigin: origin, expectedRPID: rpID, requireUserVerification: true,
+      });
+    } catch (e) { return json({ error: 'Vérification impossible : ' + e.message }, 400); }
+    if (!v.verified) return json({ error: 'Vérification refusée.' }, 400);
+    const cred = v.registrationInfo.credential;
+    const user = (await users().get(auth.name, { type: 'json' })) || auth.user;
+    user.passkeys = (user.passkeys || []).filter((k) => k.id !== cred.id);
+    if (user.passkeys.length >= MAX_PASSKEYS) return json({ error: 'Trop d’appareils enregistrés. Retirez-en un d’abord.' }, 400);
+    user.passkeys.push({
+      id: cred.id, publicKey: Buffer.from(cred.publicKey).toString('base64url'), counter: cred.counter,
+      transports: cred.transports || body.response?.response?.transports || [],
+      label: String(body.label || 'Appareil').slice(0, 40), created: new Date().toISOString(),
+    });
+    await users().setJSON(auth.name, user);
+    await passkeyIndex().setJSON(cred.id, { username: auth.name });
+    return json({ id: cred.id });
+  }
+
+  async function passkeyLoginOptions(req) {
+    const body = await readBody(req);
+    const { rpID } = site(req);
+    const hint = CRED_ID_RE.test(String(body.credentialId || '')) ? [{ id: body.credentialId }] : [];
+    const options = await generateAuthenticationOptions({ rpID, userVerification: 'required', allowCredentials: hint });
+    return json({ options, challengeToken: await challengeToken(options.challenge, 'auth') });
+  }
+
+  async function passkeyLogin(req) {
+    const body = await readBody(req);
+    const ch = await readChallenge(body.challengeToken, 'auth');
+    const credId = String(body.response?.id || '');
+    const refused = json({ error: 'Face ID / empreinte non reconnu pour ce site. Connectez-vous avec votre mot de passe.' }, 401);
+    if (!CRED_ID_RE.test(credId)) return refused;
+    const link = await passkeyIndex().get(credId, { type: 'json' });
+    if (!link) return refused;
+    const store = users();
+    const user = await store.get(link.username, { type: 'json' });
+    const key = user && (user.passkeys || []).find((k) => k.id === credId);
+    if (!key) return refused;
+    const { rpID, origin } = site(req);
+    let v;
+    try {
+      v = await verifyAuthenticationResponse({
+        response: body.response, expectedChallenge: ch.c, expectedOrigin: origin, expectedRPID: rpID, requireUserVerification: true,
+        credential: { id: key.id, publicKey: Buffer.from(key.publicKey, 'base64url'), counter: key.counter, transports: key.transports },
+      });
+    } catch (e) { return refused; }
+    if (!v.verified) return refused;
+    key.counter = v.authenticationInfo.newCounter;
+    key.lastUsed = new Date().toISOString();
+    user.fails = 0; user.lockUntil = 0;
+    await store.setJSON(link.username, user);
+    return json(await issue(link.username, user));
+  }
+
+  async function passkeyDelete(req, auth) {
+    const body = await readBody(req);
+    const user = (await users().get(auth.name, { type: 'json' })) || auth.user;
+    const before = (user.passkeys || []).length;
+    user.passkeys = (user.passkeys || []).filter((k) => k.id !== body.id);
+    if (user.passkeys.length !== before) {
+      await users().setJSON(auth.name, user);
+      await passkeyIndex().delete(String(body.id));
+    }
+    return json({ ok: true });
+  }
+
   return async function handler(req) {
     const path = new URL(req.url).pathname.replace(/\/+$/, '');
     try {
       if (req.method === 'POST' && path === '/api/register') return await register(req);
       if (req.method === 'POST' && path === '/api/login') return await login(req);
+      if (req.method === 'POST' && path === '/api/passkey/login-options') return await passkeyLoginOptions(req);
+      if (req.method === 'POST' && path === '/api/passkey/login') return await passkeyLogin(req);
 
       const auth = await authUser(req);
       if (!auth) return json({ error: 'Session expirée, reconnectez-vous.' }, 401);
@@ -178,6 +293,9 @@ export function makeHandler(getStore) {
       if (req.method === 'POST' && path === '/api/password') return await changePassword(req, auth);
       if (req.method === 'GET' && path === '/api/data') return await getData(auth);
       if (req.method === 'PUT' && path === '/api/data') return await putData(req, auth);
+      if (req.method === 'POST' && path === '/api/passkey/register-options') return await passkeyRegisterOptions(req, auth);
+      if (req.method === 'POST' && path === '/api/passkey/register') return await passkeyRegister(req, auth);
+      if (req.method === 'POST' && path === '/api/passkey/delete') return await passkeyDelete(req, auth);
       return json({ error: 'Introuvable' }, 404);
     } catch (e) {
       if (e.status) return json({ error: e.message }, e.status);

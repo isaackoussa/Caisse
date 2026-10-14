@@ -7,6 +7,7 @@
 
 const AUTH_KEY = 'caisse.auth';
 const PIN_KEY = 'caisse.pin';
+const BIO_KEY = 'caisse.bio'; // { username, credId } : Face ID / empreinte activé sur cet appareil
 const LOCK_AFTER_MS = 60 * 1000;      // verrouillage après 1 min en arrière-plan
 const SYNC_EVERY_MS = 2 * 60 * 1000;  // synchro périodique quand l'app est ouverte
 
@@ -252,6 +253,123 @@ function openPasswordSheet() {
   });
 }
 
+/* ---------- Face ID / empreinte (WebAuthn) ---------- */
+
+const isApple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+const BIO_NAME = isApple ? 'Face ID' : 'l’empreinte';
+const BIO_LABEL = isApple ? 'Face ID / Touch ID' : 'Empreinte digitale';
+const BIO_ICON = isApple ? '🙂' : '👆';
+
+let bioAvailable = false;
+const bioCheck = (window.PublicKeyCredential && PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable)
+  ? PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable().then((ok) => { bioAvailable = !!ok; }).catch(() => {})
+  : Promise.resolve();
+
+const bioMarker = () => readJSON(BIO_KEY);
+// Face ID utilisable pour déverrouiller : activé sur cet appareil pour le compte connecté
+const bioReady = () => { const m = bioMarker(); return !!(m && auth && m.username === auth.username && window.PublicKeyCredential); };
+const hasPinSet = () => !!readJSON(PIN_KEY);
+const lockEnabled = () => hasPinSet() || bioReady();
+
+const toB64u = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const fromB64u = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+
+function creationOptions(o) {
+  return {
+    ...o, challenge: fromB64u(o.challenge), user: { ...o.user, id: fromB64u(o.user.id) },
+    excludeCredentials: (o.excludeCredentials || []).map((c) => ({ ...c, id: fromB64u(c.id) })),
+  };
+}
+function requestOptions(o) {
+  return { ...o, challenge: fromB64u(o.challenge), allowCredentials: (o.allowCredentials || []).map((c) => ({ ...c, id: fromB64u(c.id) })) };
+}
+function credentialJSON(c) {
+  const r = c.response;
+  const out = { id: c.id, rawId: toB64u(c.rawId), type: c.type, clientExtensionResults: c.getClientExtensionResults ? c.getClientExtensionResults() : {}, authenticatorAttachment: c.authenticatorAttachment || undefined, response: { clientDataJSON: toB64u(r.clientDataJSON) } };
+  if (r.attestationObject) {
+    out.response.attestationObject = toB64u(r.attestationObject);
+    out.response.transports = r.getTransports ? r.getTransports() : [];
+  } else {
+    Object.assign(out.response, { authenticatorData: toB64u(r.authenticatorData), signature: toB64u(r.signature), userHandle: r.userHandle ? toB64u(r.userHandle) : undefined });
+  }
+  return out;
+}
+
+function bioError(e) {
+  if (e && (e.name === 'NotAllowedError' || e.name === 'AbortError')) return new Error(`${BIO_LABEL} : vérification annulée ou non reconnue.`);
+  if (e && e.name === 'InvalidStateError') return new Error(`${BIO_LABEL} est déjà activé pour ce compte sur cet appareil.`);
+  return e instanceof Error ? e : new Error(String(e));
+}
+
+// Options préparées à l'avance : sur iPhone, Face ID doit se lancer juste après l'appui
+const prefetched = {};
+function prefetch(kind) {
+  const url = kind === 'reg' ? '/api/passkey/register-options' : '/api/passkey/login-options';
+  const body = kind === 'reg' ? {} : { credentialId: (bioMarker() || {}).credId };
+  const token = kind === 'reg' ? undefined : null;
+  prefetched[kind] = { at: Date.now(), p: apiCall(url, { method: 'POST', body, token }) };
+  prefetched[kind].p.catch(() => {});
+}
+async function takeOptions(kind) {
+  const f = prefetched[kind];
+  delete prefetched[kind];
+  if (f && Date.now() - f.at < 4 * 60000) { try { return await f.p; } catch (e) { /* on réessaie */ } }
+  prefetch(kind);
+  const g = prefetched[kind]; delete prefetched[kind];
+  return g.p;
+}
+
+async function enableBio() {
+  try {
+    const { options, challengeToken } = await takeOptions('reg');
+    const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
+    const label = isApple ? 'iPhone / iPad' : (navigator.userAgentData && navigator.userAgentData.platform) || 'Android';
+    const res = await apiCall('/api/passkey/register', { method: 'POST', body: { response: credentialJSON(cred), challengeToken, label } });
+    writeJSON(BIO_KEY, { username: auth.username, credId: res.id });
+    render();
+    toast(`${BIO_LABEL} activé ${BIO_ICON}`);
+  } catch (e) {
+    toast('⚠️ ' + bioError(e).message);
+    render();
+  }
+}
+
+async function disableBio() {
+  if (!confirm(`Désactiver ${BIO_NAME} sur cet appareil ?`)) return;
+  const m = bioMarker();
+  try { if (m) await apiCall('/api/passkey/delete', { method: 'POST', body: { id: m.credId } }); }
+  catch (e) { toast('⚠️ ' + e.message); return; }
+  writeJSON(BIO_KEY, null);
+  render();
+  toast(`${BIO_LABEL} désactivé`);
+}
+
+// Vérifie le visage / l'empreinte. Avec le réseau : vérifié par le serveur (renvoie une session).
+// Sans réseau (déverrouillage seulement) : vérifié par le téléphone.
+async function bioAuthenticate({ allowOffline = false } = {}) {
+  const m = bioMarker();
+  let opts;
+  try { opts = await takeOptions('auth'); }
+  catch (e) {
+    if (!(e.offline && allowOffline && m)) throw e;
+    const challenge = crypto.getRandomValues(new Uint8Array(32));
+    try {
+      await navigator.credentials.get({ publicKey: { challenge, allowCredentials: [{ type: 'public-key', id: fromB64u(m.credId) }], userVerification: 'required', timeout: 60000 } });
+    } catch (err) { throw bioError(err); }
+    return { offline: true };
+  }
+  let cred;
+  try { cred = await navigator.credentials.get({ publicKey: requestOptions(opts.options) }); }
+  catch (err) { throw bioError(err); }
+  try {
+    return await apiCall('/api/passkey/login', { method: 'POST', body: { response: credentialJSON(cred), challengeToken: opts.challengeToken }, token: null });
+  } catch (e) {
+    // Le réseau a coupé après la vérification par le téléphone : on déverrouille quand même
+    if (e.offline && allowOffline && m && cred.id === m.credId) return { offline: true };
+    throw e;
+  }
+}
+
 /* ---------- Écran d'accueil / verrouillage ---------- */
 
 const gate = $('#gate');
@@ -279,18 +397,23 @@ function renderGate() {
   const logo = `<img src="icons/icon-192.png" alt="" class="gate-logo"><div class="gate-name">Caisse</div>`;
   if (mode === 'pin') {
     const waiting = pinWaitUntil > Date.now();
+    const pin = hasPinSet(), bio = bioReady();
     gate.innerHTML = `
       <div class="gate-box">
         ${logo}
-        <p class="gate-msg">${waiting ? `Trop d’essais. Patientez ${Math.ceil((pinWaitUntil - Date.now()) / 1000)} s.` : gateOpts.message || 'Entrez votre code'}</p>
+        <p class="gate-msg">${waiting ? `Trop d’essais. Patientez ${Math.ceil((pinWaitUntil - Date.now()) / 1000)} s.` : esc(gateOpts.message || (pin ? 'Entrez votre code' : 'Application verrouillée'))}</p>
+        ${bio ? `<button type="button" class="btn primary block bio-btn" data-gate="bio-unlock">${BIO_ICON} Déverrouiller avec ${BIO_NAME}</button>` : ''}
+        ${pin ? `
         <div class="pin-dots">${[0, 1, 2, 3].map((i) => `<span class="${i < pinEntry.length ? 'on' : ''}"></span>`).join('')}</div>
         <div class="keypad">
           ${['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'].map((k) =>
             k ? `<button type="button" data-key="${k}" ${waiting ? 'disabled' : ''} aria-label="${k === '⌫' ? 'Effacer' : k}">${k}</button>` : '<span></span>').join('')}
         </div>
-        <button type="button" class="link-btn" data-gate="forgot">Code oublié ?</button>
+        <button type="button" class="link-btn" data-gate="forgot">Code oublié ?</button>`
+        : '<button type="button" class="link-btn" data-gate="unlock-password">Utiliser mon mot de passe</button>'}
       </div>`;
     if (waiting) setTimeout(() => gateOpts.mode === 'pin' && renderGate(), 1000);
+    if (bio && !gateOpts.prefetched) { gateOpts.prefetched = true; prefetch('auth'); }
     return;
   }
   const isLogin = mode !== 'register';
@@ -302,6 +425,9 @@ function renderGate() {
         <button type="button" data-gate="login" class="${isLogin ? 'on' : ''}">Se connecter</button>
         <button type="button" data-gate="register" class="${!isLogin ? 'on' : ''}">Créer un compte</button>
       </div>`}
+      ${isLogin && !gateOpts.purpose && bioMarker() && window.PublicKeyCredential ? `
+        <button type="button" class="btn primary block bio-btn" data-gate="bio-login">${BIO_ICON} Se connecter avec ${BIO_NAME} (${esc(bioMarker().username)})</button>
+        <p class="gate-or"><span>ou avec le mot de passe</span></p>` : ''}
       <label class="f">Identifiant
         <input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required value="${esc(gateOpts.username || '')}" placeholder="ex. isaac">
       </label>
@@ -312,12 +438,14 @@ function renderGate() {
       <p class="sub" style="margin:-4px 0 12px">Identifiant : 3 à 30 caractères (lettres, chiffres, . _ -). Mot de passe : 6 caractères minimum. Notez-le bien : il n’y a pas de récupération par e-mail.</p>`}
       <p class="gate-error" id="gate-error" role="alert"></p>
       <button class="btn primary block" type="submit">${isLogin ? 'Se connecter' : 'Créer mon compte'}</button>
-      ${gateOpts.purpose === 'reset-pin' ? '<button type="button" class="link-btn" data-gate="back-pin">Retour</button>' : ''}
-      ${gateOpts.forced && gateOpts.purpose !== 'reset-pin' ? '<button type="button" class="link-btn" data-gate="switch">Utiliser un autre compte</button>' : ''}
+      ${gateOpts.purpose ? '<button type="button" class="link-btn" data-gate="back-pin">Retour</button>' : ''}
+      ${gateOpts.forced && !gateOpts.purpose ? '<button type="button" class="link-btn" data-gate="switch">Utiliser un autre compte</button>' : ''}
     </form>`;
+  const showsBio = !!gate.querySelector('[data-gate=bio-login]');
+  if (showsBio && !gateOpts.prefetched) { gateOpts.prefetched = true; prefetch('auth'); }
   setTimeout(() => {
     const f = $('#gate-form');
-    if (f) (f.elements.username.value ? f.elements.password : f.elements.username).focus();
+    if (f && !showsBio) (f.elements.username.value ? f.elements.password : f.elements.username).focus();
   }, 50);
 }
 
@@ -336,11 +464,49 @@ async function submitGateForm(form) {
     const res = await apiCall(isLogin ? '/api/login' : '/api/register', { method: 'POST', body: { username, password: f.password.value }, token: null });
     if (res.status === 409) throw new Error(res.error);
     if (gateOpts.purpose === 'reset-pin') { writeJSON(PIN_KEY, null); pinFails = 0; }
+    if (gateOpts.purpose === 'unlock' && auth && res.username === auth.username) {
+      auth.token = res.token; saveAuth(); return unlocked();
+    }
     await afterLogin(res);
   } catch (e) {
     err.textContent = e.message;
     btn.disabled = false;
     btn.textContent = isLogin ? 'Se connecter' : 'Créer mon compte';
+  }
+}
+
+function unlocked() {
+  pinFails = 0;
+  hideGate();
+  if (!auth) showGate('login');
+  else if (!auth.token) showGate('login', { forced: true, username: auth.username, message: 'Reconnectez-vous pour continuer.' });
+  else sync();
+}
+
+async function bioUnlock(btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const res = await bioAuthenticate({ allowOffline: true });
+    if (res.token && auth && res.username === auth.username) { auth.token = res.token; saveAuth(); }
+    unlocked();
+  } catch (e) {
+    gateOpts.message = e.message;
+    gateOpts.prefetched = false;
+    renderGate();
+  }
+}
+
+async function bioLogin(btn) {
+  const err = $('#gate-error');
+  btn.disabled = true;
+  try {
+    const res = await bioAuthenticate();
+    await afterLogin(res);
+  } catch (e) {
+    if (err) err.textContent = e.message;
+    btn.disabled = false;
+    gateOpts.prefetched = false;
+    prefetch('auth');
   }
 }
 
@@ -350,14 +516,7 @@ async function pressPinKey(k) {
   else if (pinEntry.length < 4) pinEntry += k;
   renderGate();
   if (pinEntry.length < 4) return;
-  if (await checkPin(pinEntry)) {
-    pinFails = 0;
-    hideGate();
-    if (!auth) showGate('login');
-    else if (!auth.token) showGate('login', { forced: true, username: auth.username, message: 'Reconnectez-vous pour continuer.' });
-    else sync();
-    return;
-  }
+  if (await checkPin(pinEntry)) return unlocked();
   pinFails++;
   pinEntry = '';
   if (pinFails >= 5) { pinFails = 0; pinWaitUntil = Date.now() + 30000; }
@@ -379,6 +538,12 @@ gate.addEventListener('click', (e) => {
       gateOpts.mode = g.dataset.gate; gateOpts.message = ''; return renderGate();
     case 'switch':
       return showGate('login');
+    case 'bio-unlock':
+      return bioUnlock(g);
+    case 'bio-login':
+      return bioLogin(g);
+    case 'unlock-password':
+      return showGate('login', { forced: true, purpose: 'unlock', username: auth && auth.username, message: 'Entrez votre mot de passe pour déverrouiller.' });
     case 'back-pin':
       return showGate('pin');
     case 'forgot':
@@ -401,6 +566,8 @@ document.addEventListener('keydown', (e) => {
 
 function accountSettingsHTML() {
   const hasPin = !!readJSON(PIN_KEY);
+  const bioOn = bioReady();
+  if (auth && auth.token && bioAvailable && !bioOn && !prefetched.reg) prefetch('reg');
   return `
     <section class="card">
       <h2>Mon compte</h2>
@@ -420,6 +587,15 @@ function accountSettingsHTML() {
             : '<span class="sub">Indisponible ici (connexion non sécurisée)</span>'}
         </span>
       </div>
+      ${auth ? `<div class="settings-row">
+        <span>${BIO_ICON} ${BIO_LABEL} <span class="sub">${bioOn ? 'activé' : 'désactivé'}</span></span>
+        <span class="btn-row" style="flex:none">
+          ${bioAvailable
+            ? (bioOn ? '<button class="btn danger" id="bio-off">Retirer</button>' : '<button class="btn" id="bio-on">Activer</button>')
+            : '<span class="sub">Non disponible sur cet appareil</span>'}
+        </span>
+      </div>
+      <p class="sub" style="margin:4px 0 0">${BIO_LABEL} déverrouille l’app et permet de vous connecter sans mot de passe sur cet appareil.</p>` : ''}
     </section>`;
 }
 
@@ -432,6 +608,8 @@ document.addEventListener('click', (e) => {
     case 'change-password': return openPasswordSheet();
     case 'logout': return logout();
     case 'pin-on': case 'pin-change': return openPinSheet();
+    case 'bio-on': return enableBio();
+    case 'bio-off': return disableBio();
     case 'pin-off':
       if (confirm('Retirer le code PIN ?')) { writeJSON(PIN_KEY, null); render(); toast('Code PIN retiré'); }
   }
@@ -442,15 +620,17 @@ document.addEventListener('click', (e) => {
 let hiddenAt = 0;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { hiddenAt = Date.now(); return; }
-  if (readJSON(PIN_KEY) && gate.hidden && Date.now() - hiddenAt > LOCK_AFTER_MS) showGate('pin');
+  if (lockEnabled() && gate.hidden && Date.now() - hiddenAt > LOCK_AFTER_MS) showGate('pin');
   if (auth) sync();
 });
 window.addEventListener('online', () => auth && sync());
 setInterval(() => { if (auth && !document.hidden) sync(); }, SYNC_EVERY_MS);
 
+bioCheck.then(() => { if (ui.view === 'settings' && gate.hidden) render(); });
+
 (function startAccount() {
   setSyncStatus(auth && auth.dirty ? 'pending' : 'idle');
-  if (readJSON(PIN_KEY)) showGate('pin');
+  if (lockEnabled()) showGate('pin');
   else if (auth && !auth.token) showGate('login', { forced: true, username: auth.username, message: 'Reconnectez-vous pour continuer.' });
   else if (!auth) showGate('login');
   if (auth && auth.token) sync();

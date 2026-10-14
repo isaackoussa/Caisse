@@ -33,6 +33,7 @@ function fileStore(name) {
     },
     async set(key, value, opts) { return write(key, String(value), opts); },
     async setJSON(key, value, opts) { return write(key, JSON.stringify(value), opts); },
+    async delete(key) { if (fs.existsSync(file(key))) fs.unlinkSync(file(key)); },
   };
 }
 

@@ -6,6 +6,7 @@
     "dev": "node scripts/dev-server.mjs"
   },
   "dependencies": {
-    "@netlify/blobs": "^11.1.4"
+    "@netlify/blobs": "^11.1.4",
+    "@simplewebauthn/server": "^14.0.3"
   }
 }

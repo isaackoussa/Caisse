@@ -303,3 +303,8 @@ body.gated .fab, body.gated .tabbar { visibility: hidden; }
 }
 .keypad button:active { background: var(--surface-2); }
 .pin-input { font-size: 24px !important; letter-spacing: 12px; text-align: center; }
+
+/* Face ID / empreinte */
+.bio-btn { margin-bottom: 18px; font-size: 16px; padding: 14px; }
+.gate-or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 13px; margin: -4px 0 14px; }
+.gate-or::before, .gate-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }

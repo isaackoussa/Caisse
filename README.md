@@ -12,6 +12,7 @@ Application web (installable sur téléphone) pour suivre son portefeuille, ses 
 
 - **Compte en ligne** : identifiant + mot de passe. Les données sont enregistrées sur votre site Netlify (Netlify Blobs) et synchronisées entre tous vos appareils, même après une utilisation hors connexion.
 - **Code PIN** : verrouille l'app sur le téléphone (à l'ouverture et après 1 minute en arrière-plan).
+- **Face ID / empreinte** : déverrouille l'app et permet de se connecter sans mot de passe sur l'appareil (clés d'accès WebAuthn vérifiées par le serveur). Fonctionne uniquement en https (site Netlify) ; si l'adresse du site change, il faut le réactiver.
 
 La connexion est obligatoire : sans compte, l'app reste sur l'écran de connexion.
 
@@ -58,4 +59,5 @@ L'app apparaît alors avec son icône et fonctionne hors-ligne.
 - Après 5 mauvais mots de passe, le compte est bloqué 5 minutes.
 - Changer de mot de passe déconnecte les autres appareils.
 - Optionnel : définir la variable d'environnement `CAISSE_SECRET` sur Netlify pour choisir la clé de signature des sessions (sinon elle est générée automatiquement).
+- Face ID / empreinte : le visage ou l'empreinte ne quittent jamais le téléphone ; le serveur vérifie une signature cryptographique (bibliothèque SimpleWebAuthn).
 - Le code PIN protège l'accès à l'app sur le téléphone ; il ne chiffre pas les données stockées dans le navigateur.
