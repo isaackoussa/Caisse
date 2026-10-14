@@ -27,13 +27,15 @@ const DEFAULT_CATEGORIES = [
 
 const DEFAULT_ACCOUNTS = [
   { id: 'a-especes', name: 'Espèces', icon: '💵', initial: 0 },
-  { id: 'a-banque', name: 'Compte courant', icon: '🏦', initial: 0 },
+  { id: 'a-banque', name: 'Compte bancaire', icon: '🏦', initial: 0 },
+  { id: 'a-mobile', name: 'Mobile Money', icon: '📱', initial: 0 },
 ];
 
 const CURRENCIES = [
+  ['XOF', 'Franc CFA (BCEAO — Afrique de l’Ouest)'], ['XAF', 'Franc CFA (BEAC — Afrique centrale)'],
   ['EUR', 'Euro (€)'], ['USD', 'Dollar US ($)'], ['CAD', 'Dollar canadien ($)'],
   ['CHF', 'Franc suisse'], ['GBP', 'Livre sterling (£)'], ['MAD', 'Dirham marocain'],
-  ['XOF', 'Franc CFA (BCEAO)'], ['XAF', 'Franc CFA (BEAC)'], ['TND', 'Dinar tunisien'],
+  ['GNF', 'Franc guinéen'], ['CDF', 'Franc congolais'], ['TND', 'Dinar tunisien'],
   ['DZD', 'Dinar algérien'], ['LBP', 'Livre libanaise'], ['HTG', 'Gourde haïtienne'],
 ];
 
@@ -44,7 +46,7 @@ const uid = (p) => p + '-' + Date.now().toString(36) + Math.random().toString(36
 function freshState() {
   return {
     version: 1,
-    currency: 'EUR',
+    currency: 'XOF',
     theme: 'auto',
     accounts: structuredClone(DEFAULT_ACCOUNTS),
     categories: DEFAULT_CATEGORIES.map((c) => ({ ...c, budget: 0 })),
@@ -85,22 +87,33 @@ function save() {
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-function money(cents, opts = {}) {
-  let fmt;
-  try {
-    fmt = new Intl.NumberFormat('fr-FR', {
-      style: 'currency', currency: state.currency,
-      maximumFractionDigits: opts.compact ? 0 : 2,
-      minimumFractionDigits: opts.compact ? 0 : undefined,
-      signDisplay: opts.sign ? 'exceptZero' : 'auto',
-    });
-  } catch (e) {
-    fmt = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
-  }
-  return fmt.format(cents / 100);
+// Nombre de décimales usuel de la devise (0 pour le franc CFA, 2 pour l'euro)
+function decimals() {
+  try { return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: state.currency }).resolvedOptions().maximumFractionDigits; }
+  catch (e) { return 2; }
 }
 
-const kpiMoney = (cents, sign = false) => money(cents, { sign, compact: Math.abs(cents) >= 100000 });
+function money(cents, opts = {}) {
+  const d = decimals();
+  const o = {
+    style: 'currency', currency: state.currency,
+    minimumFractionDigits: opts.compact ? 0 : d,
+    maximumFractionDigits: opts.compact ? 0 : d,
+    signDisplay: opts.sign ? 'exceptZero' : 'auto',
+  };
+  // Très grands montants dans les tuiles : notation courte (ex. 1,2 M F CFA)
+  if (opts.short) Object.assign(o, { notation: 'compact', maximumFractionDigits: 1 });
+  try { return new Intl.NumberFormat('fr-FR', o).format(cents / 100); }
+  catch (e) { return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(cents / 100); }
+}
+
+// Valeur d'un montant pour un champ de saisie
+const inputValue = (cents) => (cents / 100).toFixed(decimals()).replace('.', ',');
+
+const kpiMoney = (cents, sign = false) => {
+  const units = Math.abs(cents) / 100;
+  return money(cents, { sign, compact: units >= 1000, short: units >= 1000000 });
+};
 
 function compact(cents) {
   const v = cents / 100;
@@ -110,8 +123,18 @@ function compact(cents) {
   return Math.round(v).toLocaleString('fr-FR');
 }
 
+function currencySymbol() {
+  try {
+    const parts = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: state.currency }).formatToParts(0);
+    return (parts.find((x) => x.type === 'currency') || {}).value || state.currency;
+  } catch (e) { return state.currency; }
+}
+
 function parseAmount(str) {
-  const clean = String(str).replace(/\s/g, '').replace(',', '.').replace(/[^\d.]/g, '');
+  let clean = String(str).replace(/\s/g, '');
+  // Devise sans centimes (franc CFA) : « 25.000 » ou « 25,000 » = vingt-cinq mille
+  clean = decimals() === 0 ? clean.replace(/[.,]/g, '') : clean.replace(',', '.');
+  clean = clean.replace(/[^\d.]/g, '');
   const n = parseFloat(clean);
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) : null;
 }
@@ -332,7 +355,7 @@ function viewTx() {
     list = list.filter((t) => {
       const c = catById(t.categoryId);
       const a = accById(t.accountId);
-      return [t.note, c && c.name, a && a.name, (t.amount / 100).toFixed(2)].some((s) => s && String(s).toLowerCase().includes(q));
+      return [t.note, c && c.name, a && a.name, String(t.amount / 100)].some((s) => s && String(s).toLowerCase().includes(q));
     });
   }
   list = sortedTx(list);
@@ -412,9 +435,9 @@ function viewStats() {
   return `
     <div class="toolbar"><div class="seg">${seg}</div></div>
     <section class="kpis">
-      <div class="kpi"><div class="label">Revenu moyen</div><div class="value">${money(Math.round(totIn / n), { compact: true })}</div></div>
-      <div class="kpi"><div class="label">Dépense moy.</div><div class="value">${money(Math.round(totOut / n), { compact: true })}</div></div>
-      <div class="kpi"><div class="label">Épargné</div><div class="value ${totIn - totOut >= 0 ? 'pos' : 'neg'}">${money(totIn - totOut, { compact: true, sign: true })}</div></div>
+      <div class="kpi"><div class="label">Revenu moyen</div><div class="value">${kpiMoney(Math.round(totIn / n))}</div></div>
+      <div class="kpi"><div class="label">Dépense moy.</div><div class="value">${kpiMoney(Math.round(totOut / n))}</div></div>
+      <div class="kpi"><div class="label">Épargné</div><div class="value ${totIn - totOut >= 0 ? 'pos' : 'neg'}">${kpiMoney(totIn - totOut, true)}</div></div>
     </section>
 
     <section class="card">
@@ -605,9 +628,9 @@ function openTxSheet(existing, preset = {}) {
         ${[['expense', 'Dépense'], ['income', 'Revenu'], ['transfer', 'Virement']].map(([k, l]) =>
           `<button type="button" data-type="${k}" class="${type === k ? 'on' : ''}" ${k === 'transfer' && state.accounts.length < 2 ? 'disabled' : ''}>${l}</button>`).join('')}
       </div>
-      <label class="f">Montant (${state.currency})
-        <input class="amount-input" name="amount" inputmode="decimal" autocomplete="off" required placeholder="0,00"
-          value="${t.amount ? (t.amount / 100).toFixed(2).replace('.', ',') : ''}">
+      <label class="f">Montant (${currencySymbol()})
+        <input class="amount-input" name="amount" inputmode="decimal" autocomplete="off" required placeholder="${inputValue(0)}"
+          value="${t.amount ? inputValue(t.amount) : ''}">
       </label>
       ${type === 'transfer' ? `
         <div class="two">
@@ -695,8 +718,8 @@ function openAccountSheet(acc) {
     <label class="f">Nom<input name="name" required maxlength="40" value="${esc(a.name)}" placeholder="Ex. Livret A, Mobile Money…"></label>
     <div class="f" style="font-size:13px;color:var(--ink-2)">Icône</div>
     <div class="chips">${icons.map((i) => `<button type="button" class="chip ${i === icon ? 'on' : ''}" data-icon="${i}">${i}</button>`).join('')}</div>
-    <label class="f">Solde initial (${state.currency})
-      <input name="initial" inputmode="decimal" value="${(a.initial / 100).toFixed(2).replace('.', ',')}">
+    <label class="f">Solde initial (${currencySymbol()})
+      <input name="initial" inputmode="decimal" value="${inputValue(a.initial || 0)}">
     </label>
     <div class="sub" style="margin:-6px 0 14px">Le montant présent sur ce compte avant votre première opération. Peut être négatif (ex. -150).</div>
     <div class="btn-row">
@@ -744,8 +767,8 @@ function openCategorySheet(cat) {
       <label class="f">Emoji<input name="icon" maxlength="4" value="${esc(c.icon)}" style="text-align:center"></label>
       <label class="f">Nom<input name="name" required maxlength="30" value="${esc(c.name)}"></label>
     </div>
-    <label class="f" id="budget-field" ${kind === 'income' ? 'hidden' : ''}>Budget mensuel (${state.currency}, 0 = aucun)
-      <input name="budget" inputmode="decimal" value="${c.budget ? (c.budget / 100).toFixed(2).replace('.', ',') : ''}" placeholder="0">
+    <label class="f" id="budget-field" ${kind === 'income' ? 'hidden' : ''}>Budget mensuel (${currencySymbol()}, 0 = aucun)
+      <input name="budget" inputmode="decimal" value="${c.budget ? inputValue(c.budget) : ''}" placeholder="0">
     </label>
     <div class="btn-row">
       ${cat ? `<button class="btn danger" value="delete" formnovalidate>Supprimer</button>` : ''}
@@ -795,7 +818,7 @@ function exportCSV() {
   for (const t of sortedTx(state.transactions).reverse()) {
     const c = catById(t.categoryId), a = accById(t.accountId), to = accById(t.toAccountId);
     const signed = t.type === 'expense' ? -t.amount : t.amount;
-    rows.push([t.date, label[t.type], c ? c.name : '', a ? a.name : '', to ? to.name : '', (signed / 100).toFixed(2).replace('.', ','), t.note || '']);
+    rows.push([t.date, label[t.type], c ? c.name : '', a ? a.name : '', to ? to.name : '', inputValue(signed), t.note || '']);
   }
   const csv = rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\r\n');
   download(`caisse-${todayISO()}.csv`, '﻿' + csv, 'text/csv;charset=utf-8');

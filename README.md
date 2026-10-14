@@ -8,7 +8,7 @@ Application web (installable sur téléphone) pour suivre son portefeuille, ses 
 - **Opérations** : liste par jour, recherche, filtre (dépenses, revenus, virements), modification et suppression.
 - **Comptes** : plusieurs comptes (espèces, banque, épargne, mobile money…) avec solde initial et virements entre comptes.
 - **Stats** : graphique revenus vs dépenses sur 3, 6 ou 12 mois, moyennes mensuelles, top des dépenses.
-- **Réglages** : devise, thème clair/sombre, catégories et budgets mensuels, sauvegarde/restauration JSON, export CSV (Excel).
+- **Réglages** : devise (franc CFA par défaut), thème clair/sombre, catégories et budgets mensuels, sauvegarde/restauration JSON, export CSV (Excel).
 
 Les données restent **uniquement sur votre appareil** (stockage local du navigateur). Pensez à faire une sauvegarde JSON de temps en temps.
 
@@ -21,7 +21,17 @@ npx http-server .
 # puis ouvrir http://localhost:8080
 ```
 
-Pour l'utiliser sur téléphone, hébergez le dossier (GitHub Pages, Netlify…), ouvrez l'URL puis « Ajouter à l'écran d'accueil ». L'app fonctionne ensuite hors-ligne.
+## Déployer sur Netlify
+
+1. Sur [app.netlify.com](https://app.netlify.com) : **Add new site → Import an existing project → GitHub**, choisir le dépôt `Caisse` et la branche.
+2. Laisser les réglages par défaut : `netlify.toml` indique déjà qu'il n'y a rien à compiler et qu'on publie la racine.
+3. Cliquer sur **Deploy**.
+
+Ensuite, sur le téléphone, ouvrir l'URL Netlify puis :
+- **Android (Chrome)** : menu ⋮ → « Installer l'application » ;
+- **iPhone (Safari)** : bouton Partager → « Sur l'écran d'accueil ».
+
+L'app apparaît alors avec son icône et fonctionne hors-ligne.
 
 ## Fichiers
 
@@ -31,4 +41,5 @@ Pour l'utiliser sur téléphone, hébergez le dossier (GitHub Pages, Netlify…)
 | `style.css` | Styles (mobile d'abord, mode sombre) |
 | `app.js` | Logique : données, calculs, vues, formulaires |
 | `sw.js` | Service worker (hors-ligne) |
-| `manifest.webmanifest`, `icon.svg` | Installation comme application |
+| `manifest.webmanifest`, `icons/` | Installation comme application (icônes 192/512, maskable, iPhone) |
+| `netlify.toml` | Configuration Netlify (en-têtes de cache pour les mises à jour) |

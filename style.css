@@ -96,7 +96,14 @@ main { max-width: 720px; margin: 0 auto; padding: 0 16px; }
 .hero { font-size: 34px; font-weight: 700; letter-spacing: -0.5px; margin: 2px 0 6px; }
 .sub { color: var(--muted); font-size: 13px; }
 
-.kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+.kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.kpis .kpi:nth-child(3) { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.kpis .kpi:nth-child(3) .value { margin-top: 0; }
+@media (min-width: 560px) {
+  .kpis { grid-template-columns: repeat(3, 1fr); }
+  .kpis .kpi:nth-child(3) { grid-column: auto; display: block; }
+  .kpis .kpi:nth-child(3) .value { margin-top: 4px; }
+}
 .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; min-width: 0; }
 .kpi .label { font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
 .kpi .value { font-size: 17px; font-weight: 700; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
