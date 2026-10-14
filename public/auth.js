@@ -398,17 +398,35 @@ function renderGate() {
   if (mode === 'pin') {
     const waiting = pinWaitUntil > Date.now();
     const pin = hasPinSet(), bio = bioReady();
+    // Face ID / empreinte en premier : le clavier PIN n'apparaît que sur demande
+    const bioFirst = bio && !gateOpts.showPin;
+    if (bioFirst) {
+      gate.innerHTML = `
+      <div class="gate-box">
+        ${logo}
+        <p class="gate-msg">${esc(gateOpts.message || 'Application verrouillée')}</p>
+        <button type="button" class="bio-big" data-gate="bio-unlock" aria-label="Déverrouiller avec ${BIO_NAME}">
+          <span class="bio-big-icon">${BIO_ICON}</span>
+          <span>Déverrouiller avec ${BIO_NAME}</span>
+        </button>
+        ${pin ? '<button type="button" class="link-btn" data-gate="use-pin">Utiliser le code PIN</button>' : ''}
+        <button type="button" class="link-btn" data-gate="unlock-password">Utiliser mon mot de passe</button>
+      </div>`;
+      if (!gateOpts.prefetched) { gateOpts.prefetched = true; prefetch('auth'); }
+      if (!gateOpts.autoTried) { gateOpts.autoTried = true; setTimeout(() => gateOpts.mode === 'pin' && bioUnlock(null, { auto: true }), 350); }
+      return;
+    }
     gate.innerHTML = `
       <div class="gate-box">
         ${logo}
         <p class="gate-msg">${waiting ? `Trop d’essais. Patientez ${Math.ceil((pinWaitUntil - Date.now()) / 1000)} s.` : esc(gateOpts.message || (pin ? 'Entrez votre code' : 'Application verrouillée'))}</p>
-        ${bio ? `<button type="button" class="btn primary block bio-btn" data-gate="bio-unlock">${BIO_ICON} Déverrouiller avec ${BIO_NAME}</button>` : ''}
         ${pin ? `
         <div class="pin-dots">${[0, 1, 2, 3].map((i) => `<span class="${i < pinEntry.length ? 'on' : ''}"></span>`).join('')}</div>
         <div class="keypad">
           ${['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', '⌫'].map((k) =>
             k ? `<button type="button" data-key="${k}" ${waiting ? 'disabled' : ''} aria-label="${k === '⌫' ? 'Effacer' : k}">${k}</button>` : '<span></span>').join('')}
         </div>
+        ${bio ? `<button type="button" class="link-btn" data-gate="use-bio">${BIO_ICON} Utiliser ${BIO_NAME}</button>` : ''}
         <button type="button" class="link-btn" data-gate="forgot">Code oublié ?</button>`
         : '<button type="button" class="link-btn" data-gate="unlock-password">Utiliser mon mot de passe</button>'}
       </div>`;
@@ -483,16 +501,23 @@ function unlocked() {
   else sync();
 }
 
-async function bioUnlock(btn) {
+let bioBusy = false;
+async function bioUnlock(btn, { auto = false } = {}) {
+  if (bioBusy) return;
+  bioBusy = true;
   if (btn) btn.disabled = true;
   try {
     const res = await bioAuthenticate({ allowOffline: true });
     if (res.token && auth && res.username === auth.username) { auth.token = res.token; saveAuth(); }
     unlocked();
   } catch (e) {
-    gateOpts.message = e.message;
+    if (gateOpts.mode !== 'pin') return;
+    // Lancement automatique refusé (sur iPhone, Face ID demande un appui) : on attend l'appui sans message d'erreur
+    gateOpts.message = auto ? `Touchez le bouton pour utiliser ${BIO_NAME}` : e.message;
     gateOpts.prefetched = false;
     renderGate();
+  } finally {
+    bioBusy = false;
   }
 }
 
@@ -540,6 +565,10 @@ gate.addEventListener('click', (e) => {
       return showGate('login');
     case 'bio-unlock':
       return bioUnlock(g);
+    case 'use-pin':
+      gateOpts.showPin = true; gateOpts.message = ''; return renderGate();
+    case 'use-bio':
+      gateOpts.showPin = false; gateOpts.message = ''; renderGate(); return bioUnlock(gate.querySelector('[data-gate=bio-unlock]'));
     case 'bio-login':
       return bioLogin(g);
     case 'unlock-password':
@@ -557,7 +586,7 @@ gate.addEventListener('click', (e) => {
 
 // Clavier physique sur l'écran PIN
 document.addEventListener('keydown', (e) => {
-  if (gate.hidden || gateOpts.mode !== 'pin') return;
+  if (gate.hidden || gateOpts.mode !== 'pin' || !gate.querySelector('.keypad')) return;
   if (/^\d$/.test(e.key)) pressPinKey(e.key);
   if (e.key === 'Backspace') pressPinKey('⌫');
 });
