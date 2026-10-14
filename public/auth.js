@@ -7,7 +7,6 @@
 
 const AUTH_KEY = 'caisse.auth';
 const PIN_KEY = 'caisse.pin';
-const SKIP_KEY = 'caisse.sansCompte';
 const LOCK_AFTER_MS = 60 * 1000;      // verrouillage après 1 min en arrière-plan
 const SYNC_EVERY_MS = 2 * 60 * 1000;  // synchro périodique quand l'app est ouverte
 
@@ -159,7 +158,7 @@ function sessionExpired() {
   saveAuth();
   setSyncStatus('error');
   if (!gate.hidden) return; // écran PIN affiché : on demandera la connexion après déverrouillage
-  showGate('login', { forced: true, username: auth.username, message: 'Votre session a expiré. Reconnectez-vous pour continuer la synchronisation.' });
+  showGate('login', { forced: true, username: auth.username, message: 'Votre session a expiré. Reconnectez-vous pour continuer.' });
 }
 
 /* ---------- Connexion / inscription ---------- */
@@ -174,7 +173,6 @@ async function afterLogin(res) {
   }
   auth = { username: res.username, token: res.token, rev: 0, lastSync: null, dirty: true };
   saveAuth();
-  writeJSON(SKIP_KEY, null);
   hideGate();
   render();
   const ok = await sync({ quiet: false });
@@ -314,9 +312,8 @@ function renderGate() {
       <p class="sub" style="margin:-4px 0 12px">Identifiant : 3 à 30 caractères (lettres, chiffres, . _ -). Mot de passe : 6 caractères minimum. Notez-le bien : il n’y a pas de récupération par e-mail.</p>`}
       <p class="gate-error" id="gate-error" role="alert"></p>
       <button class="btn primary block" type="submit">${isLogin ? 'Se connecter' : 'Créer mon compte'}</button>
-      ${gateOpts.forced
-        ? (gateOpts.purpose === 'reset-pin' ? '<button type="button" class="link-btn" data-gate="back-pin">Retour</button>' : '<button type="button" class="link-btn" data-gate="later">Plus tard</button>')
-        : '<button type="button" class="link-btn" data-gate="skip">Continuer sans compte</button>'}
+      ${gateOpts.purpose === 'reset-pin' ? '<button type="button" class="link-btn" data-gate="back-pin">Retour</button>' : ''}
+      ${gateOpts.forced && gateOpts.purpose !== 'reset-pin' ? '<button type="button" class="link-btn" data-gate="switch">Utiliser un autre compte</button>' : ''}
     </form>`;
   setTimeout(() => {
     const f = $('#gate-form');
@@ -356,8 +353,9 @@ async function pressPinKey(k) {
   if (await checkPin(pinEntry)) {
     pinFails = 0;
     hideGate();
-    if (auth && !auth.token) showGate('login', { forced: true, username: auth.username, message: 'Reconnectez-vous pour continuer la synchronisation.' });
-    else if (auth) sync();
+    if (!auth) showGate('login');
+    else if (!auth.token) showGate('login', { forced: true, username: auth.username, message: 'Reconnectez-vous pour continuer.' });
+    else sync();
     return;
   }
   pinFails++;
@@ -379,10 +377,8 @@ gate.addEventListener('click', (e) => {
   switch (g.dataset.gate) {
     case 'login': case 'register':
       gateOpts.mode = g.dataset.gate; gateOpts.message = ''; return renderGate();
-    case 'skip':
-      writeJSON(SKIP_KEY, true); hideGate(); return toast('Mode sans compte : vos données restent sur ce téléphone');
-    case 'later':
-      return hideGate();
+    case 'switch':
+      return showGate('login');
     case 'back-pin':
       return showGate('pin');
     case 'forgot':
@@ -415,10 +411,7 @@ function accountSettingsHTML() {
           <button class="btn" id="change-password">🔑 Mot de passe</button>
         </div>
         <div class="btn-row" style="margin-bottom:6px"><button class="btn danger" id="logout">Se déconnecter</button></div>
-      ` : `
-        <p class="sub" style="margin-top:0">Créez un compte (identifiant + mot de passe) pour sauvegarder vos données en ligne et les retrouver sur tous vos appareils.</p>
-        <div class="btn-row" style="margin-bottom:6px"><button class="btn primary" id="open-login">Se connecter / Créer un compte</button></div>
-      `}
+      ` : ''}
       <div class="settings-row">
         <span>🔒 Code PIN <span class="sub">${hasPin ? 'activé' : 'désactivé'}</span></span>
         <span class="btn-row" style="flex:none">
@@ -438,7 +431,6 @@ document.addEventListener('click', (e) => {
       return sync({ quiet: false }).then((ok) => ok && id === 'sync-now' && toast('Synchronisé ✓'));
     case 'change-password': return openPasswordSheet();
     case 'logout': return logout();
-    case 'open-login': return showGate('login', { forced: false });
     case 'pin-on': case 'pin-change': return openPinSheet();
     case 'pin-off':
       if (confirm('Retirer le code PIN ?')) { writeJSON(PIN_KEY, null); render(); toast('Code PIN retiré'); }
@@ -459,7 +451,7 @@ setInterval(() => { if (auth && !document.hidden) sync(); }, SYNC_EVERY_MS);
 (function startAccount() {
   setSyncStatus(auth && auth.dirty ? 'pending' : 'idle');
   if (readJSON(PIN_KEY)) showGate('pin');
-  else if (auth && !auth.token) showGate('login', { forced: true, username: auth.username, message: 'Reconnectez-vous pour continuer la synchronisation.' });
-  else if (!auth && !readJSON(SKIP_KEY)) showGate('login');
+  else if (auth && !auth.token) showGate('login', { forced: true, username: auth.username, message: 'Reconnectez-vous pour continuer.' });
+  else if (!auth) showGate('login');
   if (auth && auth.token) sync();
 })();

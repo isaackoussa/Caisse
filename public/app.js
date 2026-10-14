@@ -618,9 +618,7 @@ function viewSettings() {
 
     <section class="card">
       <h2>Sauvegarde</h2>
-      <div class="sub" style="margin-bottom:10px">${typeof auth !== 'undefined' && auth
-        ? 'Vos données sont sauvegardées dans votre compte. Vous pouvez aussi en garder une copie sur ce téléphone.'
-        : 'Sans compte, vos données restent uniquement sur cet appareil. Exportez-les régulièrement pour ne rien perdre.'}</div>
+      <div class="sub" style="margin-bottom:10px">Vos données sont sauvegardées dans votre compte. Vous pouvez aussi en garder une copie sur ce téléphone.</div>
       <div class="btn-row" style="margin-bottom:8px">
         <button class="btn" id="export-json">⬇️ Sauvegarder (JSON)</button>
         <button class="btn" id="import-json">⬆️ Restaurer</button>

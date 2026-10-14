@@ -13,7 +13,7 @@ Application web (installable sur téléphone) pour suivre son portefeuille, ses 
 - **Compte en ligne** : identifiant + mot de passe. Les données sont enregistrées sur votre site Netlify (Netlify Blobs) et synchronisées entre tous vos appareils, même après une utilisation hors connexion.
 - **Code PIN** : verrouille l'app sur le téléphone (à l'ouverture et après 1 minute en arrière-plan).
 
-Sans compte, l'app fonctionne aussi : les données restent alors uniquement sur l'appareil.
+La connexion est obligatoire : sans compte, l'app reste sur l'écran de connexion.
 
 ## Lancer l'app
 
