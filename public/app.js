@@ -51,6 +51,8 @@ function freshState() {
     accounts: structuredClone(DEFAULT_ACCOUNTS),
     categories: DEFAULT_CATEGORIES.map((c) => ({ ...c, budget: 0 })),
     transactions: [],
+    deleted: {},
+    prefsU: 0,
   };
 }
 
@@ -72,14 +74,51 @@ function normalize(s) {
     accounts: Array.isArray(s.accounts) ? s.accounts : base.accounts,
     categories: Array.isArray(s.categories) ? s.categories : base.categories,
     transactions: Array.isArray(s.transactions) ? s.transactions : [],
+    // Pour la synchronisation : éléments supprimés (id → date) et date de modification de la devise
+    deleted: s.deleted && typeof s.deleted === 'object' ? s.deleted : {},
+    prefsU: Number(s.prefsU) || 0,
   };
 }
 
 let state = loadState();
 
-function save() {
+/* Suivi des modifications : chaque élément reçoit sa date de modification (u),
+   et chaque suppression laisse une trace, pour fusionner entre appareils. */
+const COLLECTIONS = ['accounts', 'categories', 'transactions'];
+const recordKey = (r) => { const { u, ...rest } = r; return JSON.stringify(rest); };
+
+function indexState(s) {
+  const m = new Map();
+  for (const k of COLLECTIONS) for (const r of s[k]) m.set(r.id, recordKey(r));
+  return { records: m, currency: s.currency };
+}
+let snapshot = indexState(state);
+
+function trackChanges() {
+  const now = Date.now();
+  const seen = new Set();
+  for (const k of COLLECTIONS) {
+    for (const r of state[k]) {
+      seen.add(r.id);
+      if (snapshot.records.get(r.id) !== recordKey(r)) r.u = now;
+      if (state.deleted[r.id]) delete state.deleted[r.id];
+    }
+  }
+  for (const id of snapshot.records.keys()) if (!seen.has(id)) state.deleted[id] = now;
+  if (snapshot.currency !== state.currency) state.prefsU = now;
+  snapshot = indexState(state);
+}
+
+// Enregistre sur l'appareil sans marquer de modification (après une synchro)
+function persistLocal() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
   catch (e) { toast('⚠️ Impossible d’enregistrer sur cet appareil'); }
+}
+
+function save() {
+  trackChanges();
+  persistLocal();
+  if (typeof onStateSaved === 'function') onStateSaved();
 }
 
 /* ---------- Utilitaires ---------- */
@@ -555,6 +594,7 @@ function viewSettings() {
   const themeSeg = [['auto', 'Auto'], ['light', 'Clair'], ['dark', 'Sombre']]
     .map(([k, l]) => `<button data-theme-set="${k}" class="${state.theme === k ? 'on' : ''}">${l}</button>`).join('');
   return `
+    ${typeof accountSettingsHTML === 'function' ? accountSettingsHTML() : ''}
     <section class="card">
       <h2>Général</h2>
       <div class="settings-row"><span>Devise</span>
@@ -578,7 +618,9 @@ function viewSettings() {
 
     <section class="card">
       <h2>Sauvegarde</h2>
-      <div class="sub" style="margin-bottom:10px">Vos données restent sur cet appareil. Exportez-les régulièrement pour ne rien perdre ou les transférer sur un autre appareil.</div>
+      <div class="sub" style="margin-bottom:10px">${typeof auth !== 'undefined' && auth
+        ? 'Vos données sont sauvegardées dans votre compte. Vous pouvez aussi en garder une copie sur ce téléphone.'
+        : 'Sans compte, vos données restent uniquement sur cet appareil. Exportez-les régulièrement pour ne rien perdre.'}</div>
       <div class="btn-row" style="margin-bottom:8px">
         <button class="btn" id="export-json">⬇️ Sauvegarder (JSON)</button>
         <button class="btn" id="import-json">⬆️ Restaurer</button>
@@ -873,9 +915,9 @@ document.addEventListener('click', (e) => {
     case 'export-csv': exportCSV(); return toast('CSV téléchargé');
     case 'import-json': return $('#import-file').click();
     case 'reset':
-      if (confirm('Effacer toutes vos données ? Cette action est irréversible.') && confirm('Vraiment tout effacer ?')) {
-        const theme = state.theme;
-        state = freshState(); state.theme = theme; save(); render(); toast('Données effacées');
+      if (confirm(`Effacer toutes vos données${typeof auth !== 'undefined' && auth ? ', sur tous vos appareils connectés' : ''} ? Cette action est irréversible.`) && confirm('Vraiment tout effacer ?')) {
+        const { theme, deleted } = state;
+        state = { ...freshState(), theme, deleted }; save(); render(); toast('Données effacées');
       }
       return;
   }
@@ -900,7 +942,8 @@ document.addEventListener('change', (e) => {
       const data = JSON.parse(txt);
       if (!data || !Array.isArray(data.transactions) || !Array.isArray(data.accounts)) throw new Error('format');
       if (!confirm(`Remplacer vos données actuelles par cette sauvegarde (${data.transactions.length} opérations) ?`)) return;
-      state = normalize(data); save(); applyTheme(); render(); toast('Sauvegarde restaurée ✓');
+      const { deleted } = state;
+      state = normalize(data); state.deleted = { ...deleted, ...state.deleted }; save(); applyTheme(); render(); toast('Sauvegarde restaurée ✓');
     }).catch(() => toast('Fichier invalide'));
     e.target.value = '';
   }

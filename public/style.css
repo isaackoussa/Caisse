@@ -205,6 +205,7 @@ label.f > input, label.f > select, label.f > textarea, .toolbar input, .toolbar 
 
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
 .settings-row:last-child { border-bottom: 0; }
+.settings-row select { max-width: 62%; min-width: 0; text-overflow: ellipsis; }
 .settings-row select { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); }
 
 .fab {
@@ -261,3 +262,44 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .hero { font-size: 30px; }
   .month-picker span { min-width: 90px; font-size: 14px; }
 }
+
+/* Titre + indicateur de synchronisation */
+.title-wrap { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sync-dot {
+  border: 0; background: none; padding: 4px; font-size: 16px; line-height: 1; color: var(--muted);
+  width: 28px; height: 28px; border-radius: 50%;
+}
+.sync-dot[data-state="pending"] { color: var(--accent); font-size: 22px; }
+.sync-dot[data-state="syncing"] { color: var(--accent); animation: spin 1s linear infinite; }
+.sync-dot[data-state="error"], .sync-dot[data-state="offline"] { color: var(--bad-text); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Écran de connexion / verrouillage */
+#gate {
+  position: fixed; inset: 0; z-index: 100; overflow-y: auto;
+  background: var(--page); display: flex; justify-content: center; align-items: flex-start;
+  padding: calc(40px + env(safe-area-inset-top)) 16px calc(24px + env(safe-area-inset-bottom));
+}
+#gate[hidden] { display: none; }
+body.gated { overflow: hidden; }
+body.gated .fab, body.gated .tabbar { visibility: hidden; }
+.gate-box { width: 100%; max-width: 380px; text-align: center; }
+.gate-box label.f, .gate-box .type-switch, .gate-box .sub { text-align: left; }
+.gate-logo { width: 76px; height: 76px; border-radius: 18px; display: block; margin: 0 auto 8px; }
+.gate-name { font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+.gate-msg { color: var(--ink-2); margin: 0 0 20px; }
+.gate-error { color: var(--bad-text); min-height: 1.2em; margin: 0 0 10px; font-size: 14px; text-align: left; }
+.link-btn { border: 0; background: none; color: var(--accent); padding: 14px; font-size: 14px; display: block; margin: 6px auto 0; }
+
+.pin-dots { display: flex; justify-content: center; gap: 16px; margin: 8px 0 28px; }
+.pin-dots span { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--ink-2); }
+.pin-dots span.on { background: var(--ink); border-color: var(--ink); }
+.pin-dots.shake { animation: shake .35s; }
+@keyframes shake { 25% { transform: translateX(-8px); } 50% { transform: translateX(8px); } 75% { transform: translateX(-4px); } }
+.keypad { display: grid; grid-template-columns: repeat(3, 72px); gap: 16px 24px; justify-content: center; }
+.keypad button {
+  width: 72px; height: 72px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--surface); font-size: 26px; font-weight: 500;
+}
+.keypad button:active { background: var(--surface-2); }
+.pin-input { font-size: 24px !important; letter-spacing: 12px; text-align: center; }

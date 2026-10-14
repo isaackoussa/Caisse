@@ -1,5 +1,5 @@
-const CACHE = 'caisse-v3';
-const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
+const CACHE = 'caisse-v4';
+const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'auth.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png'];
 
 self.addEventListener('install', (e) => {
@@ -17,6 +17,8 @@ self.addEventListener('activate', (e) => {
 // Réseau d'abord, cache en secours (hors-ligne)
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
+  // Les données du compte ne passent jamais par le cache
+  if (new URL(e.request.url).pathname.startsWith('/api/')) return;
   e.respondWith(
     fetch(e.request)
       .then((res) => {

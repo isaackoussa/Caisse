@@ -1,7 +1,12 @@
-# Site statique : aucune compilation, on publie la racine du dépôt.
+# L'app (fichiers statiques) est dans public/, l'API dans netlify/functions/.
+# Les données des comptes sont stockées dans Netlify Blobs (rien à configurer).
 [build]
-  publish = "."
+  publish = "public"
   command = ""
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
 
 # Le service worker et le manifeste doivent toujours être relus,
 # sinon les mises à jour de l'app n'arrivent pas sur les téléphones.

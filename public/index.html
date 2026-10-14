@@ -18,7 +18,10 @@
 </head>
 <body>
   <header class="topbar">
-    <h1 id="view-title">Accueil</h1>
+    <div class="title-wrap">
+      <h1 id="view-title">Accueil</h1>
+      <button class="sync-dot" id="sync-dot" hidden aria-label="Synchronisation"></button>
+    </div>
     <div class="month-picker" id="month-picker">
       <button class="icon-btn" id="prev-month" aria-label="Mois précédent">‹</button>
       <span id="month-label"></span>
@@ -42,6 +45,9 @@
   <div id="toast" role="status"></div>
   <div id="tooltip" role="tooltip"></div>
 
+  <div id="gate" hidden></div>
+
   <script src="app.js"></script>
+  <script src="auth.js"></script>
 </body>
 </html>
