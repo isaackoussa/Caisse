@@ -192,7 +192,7 @@ async function logout() {
   persistLocal();
   setSyncStatus('idle');
   render();
-  showGate('welcome');
+  showGate('login', { autoTried: true }); // pas de Face ID automatique juste après une déconnexion
 }
 
 /* ---------- Code PIN ---------- */
@@ -233,7 +233,7 @@ function openPinSheet() {
     if (!/^\d{4}$/.test(f.pin1.value)) { toast('Le code doit contenir 4 chiffres'); return false; }
     if (f.pin1.value !== f.pin2.value) { toast('Les deux codes ne correspondent pas'); return false; }
     setPin(f.pin1.value).then(() => { render(); toast('Code PIN activé 🔒'); });
-  }, () => setTimeout(() => sheetForm.elements.pin1.focus(), 50));
+  }, () => sheetForm.elements.pin1.focus());
 }
 
 function openPasswordSheet() {
@@ -413,7 +413,7 @@ function renderGate() {
         <button type="button" class="link-btn" data-gate="unlock-password">Utiliser mon mot de passe</button>
       </div>`;
       if (!gateOpts.prefetched) { gateOpts.prefetched = true; prefetch('auth'); }
-      if (!gateOpts.autoTried) { gateOpts.autoTried = true; setTimeout(() => gateOpts.mode === 'pin' && bioUnlock(null, { auto: true }), 350); }
+      if (!gateOpts.autoTried) { gateOpts.autoTried = true; setTimeout(() => gateOpts.mode === 'pin' && !gateOpts.showPin && bioUnlock(null, { auto: true }), 0); }
       return;
     }
     gate.innerHTML = `
@@ -435,6 +435,25 @@ function renderGate() {
     return;
   }
   const isLogin = mode !== 'register';
+  const marker = bioMarker();
+  if (isLogin && !gateOpts.purpose && !gateOpts.showPassword && marker && window.PublicKeyCredential
+      && (!gateOpts.username || gateOpts.username === marker.username)) {
+    gate.innerHTML = `
+      <div class="gate-box">
+        ${logo}
+        <p class="gate-msg">${esc(gateOpts.message || `Bonjour ${marker.username}`)}</p>
+        <button type="button" class="bio-big" data-gate="bio-login" aria-label="Se connecter avec ${BIO_NAME}">
+          <span class="bio-big-icon">${BIO_ICON}</span>
+          <span>Se connecter avec ${BIO_NAME}</span>
+        </button>
+        <p class="gate-error" id="gate-error" role="alert" style="text-align:center"></p>
+        <button type="button" class="link-btn" data-gate="show-password">Utiliser mon mot de passe</button>
+        <button type="button" class="link-btn" data-gate="other-account">Autre compte / créer un compte</button>
+      </div>`;
+    if (!gateOpts.prefetched) { gateOpts.prefetched = true; prefetch('auth'); }
+    if (!gateOpts.autoTried) { gateOpts.autoTried = true; setTimeout(() => gateOpts.mode === 'login' && !gateOpts.showPassword && bioLogin(gate.querySelector('[data-gate=bio-login]'), { auto: true }), 0); }
+    return;
+  }
   gate.innerHTML = `
     <form class="gate-box" id="gate-form" novalidate>
       ${logo}
@@ -513,7 +532,7 @@ async function bioUnlock(btn, { auto = false } = {}) {
   } catch (e) {
     if (gateOpts.mode !== 'pin') return;
     // Lancement automatique refusé (sur iPhone, Face ID demande un appui) : on attend l'appui sans message d'erreur
-    gateOpts.message = auto ? `Touchez le bouton pour utiliser ${BIO_NAME}` : e.message;
+    gateOpts.message = auto ? `Touchez l’écran pour utiliser ${BIO_NAME}` : e.message;
     gateOpts.prefetched = false;
     renderGate();
   } finally {
@@ -521,17 +540,24 @@ async function bioUnlock(btn, { auto = false } = {}) {
   }
 }
 
-async function bioLogin(btn) {
-  const err = $('#gate-error');
+async function bioLogin(btn, { auto = false } = {}) {
+  if (bioBusy || !btn) return;
+  bioBusy = true;
   btn.disabled = true;
   try {
     const res = await bioAuthenticate();
     await afterLogin(res);
   } catch (e) {
-    if (err) err.textContent = e.message;
+    const err = $('#gate-error');
+    // Lancement automatique refusé (iPhone : Face ID demande un appui) : pas de message d'erreur
+    if (err) err.textContent = auto && !e.status && !e.offline ? '' : e.message;
+    const msg = gate.querySelector('.gate-msg');
+    if (auto && msg && !e.status && !e.offline) msg.textContent = `Touchez l’écran pour utiliser ${BIO_NAME}`;
     btn.disabled = false;
-    gateOpts.prefetched = false;
+    gateOpts.prefetched = true;
     prefetch('auth');
+  } finally {
+    bioBusy = false;
   }
 }
 
@@ -554,6 +580,10 @@ async function pressPinKey(k) {
 gate.addEventListener('submit', (e) => { e.preventDefault(); submitGateForm(e.target); });
 
 gate.addEventListener('click', (e) => {
+  if (!e.target.closest('button, a, input, label, select, textarea')) {
+    const big = gate.querySelector('.bio-big');
+    if (big && !big.disabled) return big.click();
+  }
   const key = e.target.closest('[data-key]');
   if (key) return pressPinKey(key.dataset.key);
   const g = e.target.closest('[data-gate]');
@@ -562,9 +592,13 @@ gate.addEventListener('click', (e) => {
     case 'login': case 'register':
       gateOpts.mode = g.dataset.gate; gateOpts.message = ''; return renderGate();
     case 'switch':
-      return showGate('login');
+      return showGate('login', { showPassword: true });
     case 'bio-unlock':
       return bioUnlock(g);
+    case 'show-password':
+      gateOpts.showPassword = true; gateOpts.message = ''; return renderGate();
+    case 'other-account':
+      return showGate('login', { showPassword: true });
     case 'use-pin':
       gateOpts.showPin = true; gateOpts.message = ''; return renderGate();
     case 'use-bio':

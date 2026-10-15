@@ -718,7 +718,7 @@ function openTxSheet(existing, preset = {}) {
       categoryId = b.dataset.chip;
       sheetForm.querySelectorAll('[data-chip]').forEach((x) => x.classList.toggle('on', x === b));
     });
-    if (!existing) setTimeout(() => sheetForm.elements.amount.focus(), 50);
+    if (!existing) sheetForm.elements.amount.focus();
   };
 
   openSheet(body(), (action) => {

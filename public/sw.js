@@ -1,4 +1,4 @@
-const CACHE = 'caisse-v7';
+const CACHE = 'caisse-v8';
 const ASSETS = ['./', 'index.html', 'style.css', 'app.js', 'auth.js', 'manifest.webmanifest',
   'icons/icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png'];
 
